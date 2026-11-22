@@ -243,20 +243,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUpCitizen = useCallback<AuthContextValue['signUpCitizen']>(
     async ({ email, password, fullName, phone, nid, privacyConsent }: CitizenSignupData) => {
       if (isDemoMode) return { error: 'registration_unavailable' };
+      if (!privacyConsent) return { error: 'invalid_details' };
 
-      const { data, error } = await supabase.functions.invoke('citizen-signup', {
-        body: {
-          email: email.trim(),
-          password,
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-          nid: nid.trim(),
-          privacyConsent,
+      // Supabase Auth creates the account. The database trigger validates the
+      // submitted metadata, creates the citizen profile, and removes the NID
+      // and phone from auth metadata immediately after profile creation.
+      const { error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          emailRedirectTo: 'https://shikor-ten.vercel.app/?page=profile',
+          data: {
+            full_name: fullName.trim(),
+            phone_number: phone.trim(),
+            nid_number: nid.trim(),
+            privacy_consent: 'true',
+          },
         },
       });
-      if (error || data?.ok !== true) {
-        const errorCode = error ? await getCitizenSignupErrorCode(error) : data?.error;
-        return { error: normalizeCitizenSignupErrorCode(errorCode) };
+      if (error) {
+        if (error.message.toLowerCase().includes('already registered')) {
+          return { error: 'registration_failed' };
+        }
+        if (error.status === 429) return { error: 'network_error' };
+        return { error: 'registration_failed' };
       }
       return { error: null };
     },
