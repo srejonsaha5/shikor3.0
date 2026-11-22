@@ -1,6 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
 import { LandLossRecord } from '../types';
 
+// Only browser-safe Supabase keys may be used in this client. Never accept
+// service_role or secret keys in a Vite/browser environment.
+export const isPublicSupabaseKey = (key: string): boolean => {
+  const value = key.trim();
+  if (/^sb_publishable_[A-Za-z0-9_-]+$/.test(value)) return true;
+  const parts = value.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload?.role === 'anon';
+  } catch {
+    return false;
+  }
+};
+
 // Retrieve credentials from environment variables or browser localStorage
 export const getStoredCredentials = () => {
   const envUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -10,7 +25,8 @@ export const getStoredCredentials = () => {
   const localKey = typeof window !== 'undefined' ? localStorage.getItem('shikor_supabase_key') : null;
 
   const url = (envUrl && envUrl !== 'https://your-project-id.supabase.co') ? envUrl : (localUrl || '');
-  const key = (envKey && envKey !== 'your-anon-public-key') ? envKey : (localKey || '');
+  const candidateKey = (envKey && envKey !== 'your-anon-public-key') ? envKey : (localKey || '');
+  const key = isPublicSupabaseKey(candidateKey) ? candidateKey : '';
 
   return { url, key };
 };
@@ -29,7 +45,7 @@ export const supabase = createClient(
 );
 
 export const saveSupabaseCredentials = (url: string, key: string) => {
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && isPublicSupabaseKey(key)) {
     localStorage.setItem('shikor_supabase_url', url.trim());
     localStorage.setItem('shikor_supabase_key', key.trim());
     window.location.reload();
@@ -48,6 +64,9 @@ export const testSupabaseConnection = async (url: string, key: string): Promise<
   try {
     if (!url.startsWith('https://') || !url.includes('.supabase.co')) {
       return { success: false, message: 'Invalid Supabase URL. Must be in the format: https://[project-ref].supabase.co' };
+    }
+    if (!isPublicSupabaseKey(key)) {
+      return { success: false, message: 'This is not a browser-safe Supabase publishable/anon key. Never enter a service_role or secret key here.' };
     }
     const response = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
       headers: { apikey: key, Accept: 'application/openapi+json' },
